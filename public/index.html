@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="theme-color" content="#E12B39" />
+  <title>WinShape Marriage · Supply Checkout</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <header class="appbar">
+    <div class="appbar-inner">
+      <img src="/WSM_logo.png" alt="WinShape Marriage" />
+      <span class="tag hide-sm">Supply Checkout</span>
+      <span class="spacer"></span>
+      <a class="btn btn-ghost btn-sm" href="/admin">Admin</a>
+    </div>
+  </header>
+
+  <main class="wrap narrow">
+    <div class="hero">
+      <h1>Checking something out?</h1>
+      <p>Pick what you're taking from the warehouse and we'll keep the counts up to date.</p>
+    </div>
+
+    <div class="card" id="form-card">
+      <form id="checkout-form" autocomplete="off">
+        <label for="category-filter">Retreat <span class="hint">— optional, narrows the list</span></label>
+        <select id="category-filter">
+          <option value="">All retreats</option>
+        </select>
+
+        <label>Item</label>
+        <div class="combo" id="item-combo">
+          <button type="button" class="combo-btn" id="item-btn" aria-haspopup="listbox" aria-expanded="false">
+            <span class="combo-btn-label" id="item-btn-label">Select an item…</span>
+            <span class="combo-caret">▾</span>
+          </button>
+          <div class="combo-panel" id="item-panel" role="listbox">
+            <input type="text" class="combo-search" id="item-search" placeholder="Search items…" autocomplete="off" />
+            <div class="combo-list" id="item-list"></div>
+          </div>
+        </div>
+        <input type="hidden" id="item" />
+
+        <div class="preview" id="preview">
+          <div class="pv-row">
+            <div class="pv-thumb" id="pv-thumb"></div>
+            <div>
+              <div class="pv-name" id="pv-name"></div>
+              <div class="pv-meta" id="pv-meta"></div>
+            </div>
+          </div>
+        </div>
+
+        <label for="quantity">Quantity</label>
+        <div class="qty-row">
+          <button type="button" class="stepper" id="minus" aria-label="Decrease">−</button>
+          <input type="number" id="quantity" min="1" value="1" inputmode="numeric" required />
+          <button type="button" class="stepper" id="plus" aria-label="Increase">+</button>
+        </div>
+
+        <label>Your name</label>
+        <div class="combo" id="person-combo">
+          <button type="button" class="combo-btn" id="person-btn" aria-haspopup="listbox" aria-expanded="false">
+            <span id="person-btn-thumb"></span>
+            <span class="combo-btn-label" id="person-btn-label">Select your name…</span>
+            <span class="combo-caret">▾</span>
+          </button>
+          <div class="combo-panel" id="person-panel" role="listbox">
+            <div class="combo-list" id="person-list"></div>
+          </div>
+        </div>
+        <input type="hidden" id="person" />
+        <input type="text" id="person-other" placeholder="Type your name" style="display:none; margin-top:10px;" />
+
+        <label for="notes">Notes <span class="hint">— optional (which retreat, where it's going, etc.)</span></label>
+        <textarea id="notes" placeholder="Anything the team should know…"></textarea>
+
+        <div style="margin-top:24px;">
+          <button type="submit" class="btn btn-primary btn-block" id="submit-btn">Check out item</button>
+        </div>
+      </form>
+
+      <div class="success-panel" id="success">
+        <div class="check">✓</div>
+        <h2>You're all set!</h2>
+        <p id="success-msg"></p>
+        <button class="btn btn-ghost" id="another">Check out another item</button>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <script src="/js/app.js"></script>
+</body>
+</html>

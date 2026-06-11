@@ -1,0 +1,55 @@
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-Regular_2791858880.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-RegularItalic_925631516.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-Medium_1420121422.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-MediumItalic_2065613994.otf') format('opentype');
+  font-weight: 500;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-Semibold_4076478494.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-SemiboldItalic_1131412346.otf') format('opentype');
+  font-weight: 600;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-Bold_2648844908.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Calibre';
+  src: url('./fonts/Calibre-BoldItalic_887816648.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+}

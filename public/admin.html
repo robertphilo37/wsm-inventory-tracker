@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WinShape Marriage · Inventory Admin</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <!-- Login gate -->
+  <div id="login" class="login-wrap" style="display:none;">
+    <div class="card">
+      <img src="/WSM_logo.png" alt="WinShape Marriage" />
+      <h2 style="margin:0 0 4px;">Inventory Admin</h2>
+      <p class="muted" style="margin:0 0 20px;">Enter the admin password to continue.</p>
+      <form id="login-form">
+        <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
+        <button class="btn btn-primary btn-block" style="margin-top:14px;" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div id="app" style="display:none;">
+    <header class="appbar">
+      <div class="appbar-inner">
+        <img src="/WSM_logo.png" alt="WinShape Marriage" />
+        <span class="tag hide-sm">Inventory Admin</span>
+        <span class="spacer"></span>
+        <a class="btn btn-ghost btn-sm" href="/" target="_blank">Open form ↗</a>
+        <button class="btn btn-ghost btn-sm" id="logout">Sign out</button>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <div class="tabs">
+        <div class="tab active" data-tab="inventory">Inventory</div>
+        <div class="tab" data-tab="history">Checkout Log</div>
+        <div class="tab" data-tab="team">Team</div>
+        <div class="tab" data-tab="qr">QR Code</div>
+      </div>
+
+      <!-- Inventory tab -->
+      <section id="tab-inventory">
+        <div class="toolbar">
+          <input class="search" id="search" type="text" placeholder="Search items…" />
+          <select id="cat-filter" style="width:auto;"><option value="">All retreats</option></select>
+          <select id="sort" style="width:auto;">
+            <option value="default">Sort: Sheet order</option>
+            <option value="name-asc">Name A → Z</option>
+            <option value="name-desc">Name Z → A</option>
+            <option value="qty-asc">Quantity: low → high</option>
+            <option value="qty-desc">Quantity: high → low</option>
+          </select>
+          <span class="spacer"></span>
+          <button class="btn btn-primary btn-sm" id="add-item">+ Add item</button>
+        </div>
+        <div id="inventory-list"></div>
+      </section>
+
+      <!-- Team tab -->
+      <section id="tab-team" style="display:none;">
+        <div class="card narrow" style="margin:0 auto;">
+          <div class="toolbar" style="margin-bottom:16px;">
+            <h3 style="margin:0;">Team members</h3>
+            <span class="spacer"></span>
+            <button class="btn btn-primary btn-sm" id="add-emp">+ Add member</button>
+          </div>
+          <p class="muted" style="margin:0 0 14px;font-size:14px;">These names fill the “Your name” picker on the checkout form. Inactive members stay in history but drop off the form.</p>
+          <div id="team-list"></div>
+        </div>
+      </section>
+
+      <!-- History tab -->
+      <section id="tab-history" style="display:none;">
+        <div class="card">
+          <div class="toolbar" style="margin-bottom:14px;">
+            <input class="search" id="history-search" type="text" placeholder="Search by person, item, retreat…" />
+            <span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" id="export-csv">Export CSV</button>
+          </div>
+          <div id="history-list"></div>
+        </div>
+      </section>
+
+      <!-- QR tab -->
+      <section id="tab-qr" style="display:none;">
+        <div class="card narrow qr-box" style="margin:0 auto;">
+          <h3 style="margin-top:0;">Checkout form QR code</h3>
+          <p class="muted">Print this and post it by the supplies. Scanning opens the checkout form.</p>
+          <img id="qr-img" alt="QR code" />
+          <div class="qr-url" id="qr-url"></div>
+          <div style="margin-top:18px;display:flex;gap:10px;justify-content:center;" class="no-print">
+            <button class="btn btn-slate btn-sm" id="print-qr">Print</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Item modal -->
+  <div class="modal-bg" id="item-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="modal-title">Add item</h3>
+        <button class="x" id="modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="f-id" />
+        <label for="f-name">Name</label>
+        <input id="f-name" type="text" />
+        <div class="grid2">
+          <div>
+            <label for="f-category">Retreat</label>
+            <select id="f-category"></select>
+          </div>
+          <div>
+            <label for="f-quantity">Quantity</label>
+            <input id="f-quantity" type="number" min="0" value="0" />
+          </div>
+        </div>
+        <div class="grid2">
+          <div>
+            <label for="f-vendor">Vendor <span class="hint">— optional</span></label>
+            <input id="f-vendor" type="text" />
+          </div>
+          <div>
+            <label for="f-cost">Cost / unit <span class="hint">— optional</span></label>
+            <input id="f-cost" type="number" step="0.01" min="0" placeholder="0.00" />
+          </div>
+        </div>
+        <label for="f-note">Note <span class="hint">— optional</span></label>
+        <input id="f-note" type="text" placeholder="e.g. old version, one-time purchase" />
+
+        <label>Photo <span class="hint">— optional, shows on the checkout form</span></label>
+        <div class="img-field">
+          <div class="img-preview" id="f-img-preview"></div>
+          <div class="img-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="f-img-pick">Choose image…</button>
+            <button type="button" class="btn btn-danger btn-sm" id="f-img-remove" style="display:none;">Remove</button>
+            <input type="file" id="f-img-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-danger btn-sm" id="modal-delete" style="margin-right:auto;display:none;">Delete</button>
+        <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log detail modal -->
+  <div class="modal-bg" id="log-modal">
+    <div class="modal" style="max-width:420px;">
+      <div class="modal-head">
+        <h3>Checkout detail</h3>
+        <button class="x" id="log-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="log-detail-hero" id="log-hero"></div>
+        <dl class="log-dl" id="log-dl"></dl>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-danger btn-sm" id="log-delete" style="margin-right:auto;">Delete entry</button>
+        <button class="btn btn-ghost" id="log-dismiss">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Employee modal -->
+  <div class="modal-bg" id="emp-modal">
+    <div class="modal" style="max-width:400px;">
+      <div class="modal-head">
+        <h3 id="emp-title">Add member</h3>
+        <button class="x" id="emp-close">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="e-id" />
+        <div id="e-photo-preview" style="text-align:center;margin-bottom:16px;display:none;">
+          <div id="e-thumb-display" style="display:inline-block;"></div>
+        </div>
+        <label for="e-name">Name</label>
+        <input id="e-name" type="text" placeholder="Full name" />
+        <label class="checkbox-row" id="e-active-row" style="display:none;">
+          <input type="checkbox" id="e-active" /> <span>Active (appears on the checkout form)</span>
+        </label>
+        <label style="margin-top:16px;">Photo <span class="hint">— optional</span></label>
+        <div class="img-field">
+          <div class="img-preview" id="e-img-preview"></div>
+          <div class="img-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="e-img-pick">Choose image…</button>
+            <button type="button" class="btn btn-danger btn-sm" id="e-img-remove" style="display:none;">Remove</button>
+            <input type="file" id="e-img-input" accept="image/png,image/jpeg,image/webp" style="display:none;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-danger btn-sm" id="emp-delete" style="margin-right:auto;display:none;">Delete</button>
+        <button class="btn btn-ghost" id="emp-cancel">Cancel</button>
+        <button class="btn btn-primary" id="emp-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/js/admin.js"></script>
+</body>
+</html>

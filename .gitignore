@@ -1,0 +1,6 @@
+node_modules/
+public/uploads/
+data.db
+data.db-wal
+data.db-shm
+server.log

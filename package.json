@@ -1,0 +1,20 @@
+{
+  "name": "wsm-inventory-tracker",
+  "version": "0.1.0",
+  "description": "WinShape Marriage retreat inventory portal — QR checkout + admin management",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node start.js",
+    "start:dev": "node server.js",
+    "seed": "node seed.js",
+    "seed:team": "node seed-team.js",
+    "reset": "rm -f data.db data.db-wal data.db-shm && node seed.js && node seed-team.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4"
+  }
+}
