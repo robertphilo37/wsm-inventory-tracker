@@ -91,16 +91,25 @@ async function loadItems() {
   renderInventory();
 }
 
+// Column sort state: { col: 'name'|'category'|'quantity'|'vendor'|'cost_per_unit'|null, dir: 'asc'|'desc' }
+let sortState = { col: null, dir: 'asc' };
+
 function sortRows(rows) {
-  const mode = $('sort').value;
-  const by = {
-    'name-asc': (a, b) => a.name.localeCompare(b.name),
-    'name-desc': (a, b) => b.name.localeCompare(a.name),
-    'qty-asc': (a, b) => a.quantity - b.quantity || a.name.localeCompare(b.name),
-    'qty-desc': (a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name),
-    'default': (a, b) => a.sort_order - b.sort_order,
-  }[mode];
-  return [...rows].sort(by);
+  if (!sortState.col) return [...rows].sort((a, b) => a.sort_order - b.sort_order);
+  const { col, dir } = sortState;
+  return [...rows].sort((a, b) => {
+    let av = a[col], bv = b[col];
+    // numeric columns
+    if (col === 'quantity' || col === 'cost_per_unit') {
+      av = av ?? -Infinity; bv = bv ?? -Infinity;
+      return dir === 'asc' ? av - bv : bv - av;
+    }
+    // string columns
+    av = (av ?? '').toString().toLowerCase();
+    bv = (bv ?? '').toString().toLowerCase();
+    const cmp = av.localeCompare(bv);
+    return dir === 'asc' ? cmp : -cmp;
+  });
 }
 
 function renderInventory() {
@@ -138,6 +147,12 @@ function renderInventory() {
     </tr>`;
   }).join('');
 
+  function colHead(label, col, cls = '') {
+    const active = sortState.col === col;
+    const arrow = active ? (sortState.dir === 'asc' ? ' ↑' : ' ↓') : ' ↕';
+    return `<th class="sortable-col ${cls}" data-col="${col}">${label}<span class="sort-indicator${active ? ' active' : ''}">${arrow}</span></th>`;
+  }
+
   container.innerHTML = `
     <div class="cat-head">
       <span class="count">${rows.length} item${rows.length !== 1 ? 's' : ''} · ${totalUnits} units</span>
@@ -146,11 +161,11 @@ function renderInventory() {
       <table>
         <thead><tr>
           <th class="thumb-cell"></th>
-          <th>Item</th>
-          <th class="hide-sm">Retreat</th>
-          <th class="num">Qty</th>
-          <th class="hide-sm">Vendor</th>
-          <th class="num hide-sm">Cost</th>
+          ${colHead('Item', 'name')}
+          ${colHead('Retreat', 'category', 'hide-sm')}
+          ${colHead('Qty', 'quantity', 'num')}
+          ${colHead('Vendor', 'vendor', 'hide-sm')}
+          ${colHead('Cost', 'cost_per_unit', 'num hide-sm')}
           <th></th>
         </tr></thead>
         <tbody>${body}</tbody>
@@ -159,10 +174,20 @@ function renderInventory() {
 
   container.querySelectorAll('[data-edit]').forEach((b) =>
     b.addEventListener('click', () => openModal(Number(b.dataset.edit))));
+
+  container.querySelectorAll('.sortable-col').forEach((th) =>
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortState.col === col) {
+        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortState = { col, dir: 'asc' };
+      }
+      renderInventory();
+    }));
 }
 $('search').addEventListener('input', renderInventory);
 $('cat-filter').addEventListener('change', renderInventory);
-$('sort').addEventListener('change', renderInventory);
 
 /* ---------------- item modal ---------------- */
 const modal = $('item-modal');

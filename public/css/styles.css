@@ -262,6 +262,10 @@ thead th {
 tbody td { padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 tbody tr:hover { background: #FBFCFD; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.sortable-col { cursor: pointer; user-select: none; white-space: nowrap; }
+.sortable-col:hover { color: var(--wsm-slate); }
+.sort-indicator { color: var(--wsm-gray-light); font-size: 11px; margin-left: 3px; }
+.sort-indicator.active { color: var(--wsm-red); }
 .qtypill {
   display: inline-block; min-width: 34px; text-align: center; font-weight: 600;
   padding: 3px 9px; border-radius: 999px; background: #EAF6EF; color: var(--ok);
