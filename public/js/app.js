@@ -3,8 +3,9 @@ const $ = (id) => document.getElementById(id);
 let items = [];
 let employees = [];
 
+let activeCat = '';   // currently selected category filter chip
+
 const els = {
-  catFilter: $('category-filter'),
   itemHidden: $('item'),
   itemBtn: $('item-btn'),
   itemBtnLabel: $('item-btn-label'),
@@ -60,11 +61,31 @@ async function load() {
   ]);
   items = itemsRes;
   employees = empRes;
+
+  // Build category filter chips inside the item dropdown
+  const chips = $('cat-chips');
+  const allChip = document.createElement('button');
+  allChip.type = 'button';
+  allChip.className = 'cat-chip active';
+  allChip.textContent = 'All';
+  allChip.dataset.cat = '';
+  chips.appendChild(allChip);
   catsRes.forEach((c) => {
-    const o = document.createElement('option');
-    o.value = c; o.textContent = c;
-    els.catFilter.appendChild(o);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cat-chip';
+    btn.textContent = c;
+    btn.dataset.cat = c;
+    chips.appendChild(btn);
   });
+  chips.addEventListener('click', (e) => {
+    const chip = e.target.closest('.cat-chip');
+    if (!chip) return;
+    activeCat = chip.dataset.cat;
+    chips.querySelectorAll('.cat-chip').forEach((b) => b.classList.toggle('active', b.dataset.cat === activeCat));
+    renderItemList();
+  });
+
   renderPeople();
   renderItemList();
 }
@@ -123,7 +144,7 @@ function personName() {
 function selectedItem() { return items.find((i) => String(i.id) === els.itemHidden.value); }
 
 function renderItemList() {
-  const cat = els.catFilter.value;
+  const cat = activeCat;
   const q = els.itemSearch.value.trim().toLowerCase();
   const cats = [...new Set(items.map((i) => i.category))];
   let html = '';
@@ -200,7 +221,6 @@ document.addEventListener('click', (e) => {
 });
 
 // --- events ---
-els.catFilter.addEventListener('change', () => { renderItemList(); });
 $('minus').addEventListener('click', () => { els.qty.value = Math.max(1, (parseInt(els.qty.value, 10) || 1) - 1); });
 $('plus').addEventListener('click', () => { els.qty.value = (parseInt(els.qty.value, 10) || 0) + 1; });
 

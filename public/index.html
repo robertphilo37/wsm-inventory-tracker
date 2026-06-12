@@ -25,11 +25,6 @@
 
     <div class="card" id="form-card">
       <form id="checkout-form" autocomplete="off">
-        <label for="category-filter">Retreat <span class="hint">— optional, narrows the list</span></label>
-        <select id="category-filter">
-          <option value="">All retreats</option>
-        </select>
-
         <label>Item</label>
         <div class="combo" id="item-combo">
           <button type="button" class="combo-btn" id="item-btn" aria-haspopup="listbox" aria-expanded="false">
@@ -37,7 +32,10 @@
             <span class="combo-caret">▾</span>
           </button>
           <div class="combo-panel" id="item-panel" role="listbox">
-            <input type="text" class="combo-search" id="item-search" placeholder="Search items…" autocomplete="off" />
+            <div class="combo-search-row">
+              <input type="text" class="combo-search" id="item-search" placeholder="Search items…" autocomplete="off" />
+            </div>
+            <div class="combo-filter-row" id="cat-chips"></div>
             <div class="combo-list" id="item-list"></div>
           </div>
         </div>
