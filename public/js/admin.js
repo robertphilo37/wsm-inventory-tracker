@@ -79,10 +79,8 @@ async function init() {
     fetch('/api/employees?all=1').then((r) => r.json()),
   ]);
   const catFilter = $('cat-filter');
-  const fCat = $('f-category');
   categories.forEach((c) => {
     catFilter.insertAdjacentHTML('beforeend', `<option value="${esc(c)}">${esc(c)}</option>`);
-    fCat.insertAdjacentHTML('beforeend', `<option value="${esc(c)}">${esc(c)}</option>`);
   });
   await loadItems();
   connectSSE();
@@ -190,7 +188,7 @@ async function openModal(id) {
   $('modal-title').textContent = it ? 'Edit item' : 'Add item';
   $('f-id').value = it ? it.id : '';
   $('f-name').value = it ? it.name : '';
-  $('f-category').value = it ? it.category : categories[0];
+  $('f-category').value = it ? it.category : (categories[0] || 'Miscellaneous Items');
   $('f-quantity').value = it ? it.quantity : 0;
   $('f-vendor').value = it ? (it.vendor || '') : '';
   $('f-cost').value = it && it.cost_per_unit != null ? it.cost_per_unit : '';

@@ -117,11 +117,12 @@ app.post('/api/checkout', async (req, res) => {
 /* -------- Admin: create/update/delete items -------- */
 app.post('/api/items', requireAdmin, async (req, res) => {
   const { category, name, quantity, vendor, cost_per_unit, note } = req.body || {};
-  if (!name?.trim() || !category) return res.status(400).json({ error: 'Name and category are required.' });
-  const maxRow = await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?', [category]);
+  const cat = category?.trim() || 'Miscellaneous Items';
+  if (!name?.trim()) return res.status(400).json({ error: 'Name is required.' });
+  const maxRow = await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?', [cat]);
   const info = await db.run(
     'INSERT INTO items (category, name, quantity, vendor, cost_per_unit, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [category, name.trim(), parseInt(quantity, 10) || 0,
+    [cat, name.trim(), parseInt(quantity, 10) || 0,
      vendor?.trim() || null,
      cost_per_unit === '' || cost_per_unit == null ? null : parseFloat(cost_per_unit),
      note?.trim() || null, (maxRow.m || 0) + 1]);
