@@ -21,7 +21,10 @@ function esc(s) {
   return (s ?? '').toString().replace(/[&<>"]/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
-function stockClass(q) { return q <= 0 ? 'out' : q <= 5 ? 'low' : ''; }
+const DEFAULT_THRESHOLD = 5;
+function isLow(i) { const t = i.low_stock_threshold ?? DEFAULT_THRESHOLD; return i.quantity > 0 && i.quantity <= t; }
+function isOut(i) { return i.quantity <= 0; }
+function stockClass(i) { return isOut(i) ? 'out' : isLow(i) ? 'low' : ''; }
 function money(n) { return n == null ? '' : '$' + Number(n).toFixed(2); }
 function initials(name) { return name.split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase(); }
 function thumbHtml(i) {
@@ -106,6 +109,7 @@ async function loadItems() {
 
 // Column sort state: { col: 'name'|'category'|'quantity'|'vendor'|'cost_per_unit'|null, dir: 'asc'|'desc' }
 let sortState = { col: null, dir: 'asc' };
+let showLowOnly = false;
 
 function sortRows(rows) {
   if (!sortState.col) return [...rows].sort((a, b) => a.sort_order - b.sort_order);
@@ -133,10 +137,18 @@ function renderInventory() {
 
   let rows = items.slice();
   if (catSel) rows = rows.filter((i) => i.category === catSel);
+  if (showLowOnly) rows = rows.filter((i) => isLow(i) || isOut(i));
   if (q) rows = rows.filter((i) =>
     i.name.toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q) ||
     i.category.toLowerCase().includes(q));
   rows = sortRows(rows);
+
+  // Update low-stock badge count (always from full item list, unaffected by current filters)
+  const lowCount = items.filter((i) => isLow(i) || isOut(i)).length;
+  const countEl = $('low-stock-count');
+  countEl.textContent = lowCount;
+  countEl.style.display = lowCount > 0 ? '' : 'none';
+  $('low-stock-btn').classList.toggle('active', showLowOnly);
 
   if (!rows.length) {
     container.innerHTML = '<div class="empty">No items match your search.</div>';
@@ -145,7 +157,7 @@ function renderInventory() {
 
   const totalUnits = rows.reduce((s, i) => s + i.quantity, 0);
   const body = rows.map((i) => {
-    const cls = stockClass(i.quantity);
+    const cls = stockClass(i);
     return `<tr>
       <td class="thumb-cell">${thumbHtml(i)}</td>
       <td>${esc(i.name)}${i.file_count > 0 ? `<span class="file-count-badge">📎 ${i.file_count}</span>` : ''}
@@ -202,6 +214,7 @@ function renderInventory() {
 }
 $('search').addEventListener('input', renderInventory);
 $('cat-filter').addEventListener('change', renderInventory);
+$('low-stock-btn').addEventListener('click', () => { showLowOnly = !showLowOnly; renderInventory(); });
 
 /* ---------------- item modal ---------------- */
 const modal = $('item-modal');
@@ -231,6 +244,7 @@ async function openModal(id) {
   $('f-quantity').value = it ? it.quantity : 0;
   $('f-vendor').value = it ? (it.vendor || '') : '';
   $('f-cost').value = it && it.cost_per_unit != null ? it.cost_per_unit : '';
+  $('f-threshold').value = it?.low_stock_threshold ?? '';
   $('f-location').value = it ? (it.location || '') : '';
   $('f-note').value = it ? (it.note || '') : '';
   $('modal-delete').style.display = it ? '' : 'none';
@@ -358,6 +372,7 @@ $('modal-save').addEventListener('click', async () => {
     quantity: $('f-quantity').value, vendor: $('f-vendor').value,
     cost_per_unit: $('f-cost').value, note: $('f-note').value,
     location: $('f-location').value,
+    low_stock_threshold: $('f-threshold').value,
   };
   if (!payload.name.trim()) return toast('Name is required.', true);
   const res = await fetch(id ? `/api/items/${id}` : '/api/items', {

@@ -45,6 +45,7 @@
         <div class="toolbar">
           <input class="search" id="search" type="text" placeholder="Search items…" />
           <select id="cat-filter" style="width:auto;"><option value="">All retreats</option></select>
+          <button class="btn btn-ghost btn-sm" id="low-stock-btn" title="Show only low or out-of-stock items">⚠️ Low stock <span id="low-stock-count" class="low-stock-count" style="display:none;"></span></button>
           <span class="spacer"></span>
           <button class="btn btn-primary btn-sm" id="add-item">+ Add item</button>
         </div>
@@ -103,8 +104,16 @@
         <input type="hidden" id="f-category" />
         <label for="f-name">Name</label>
         <input id="f-name" type="text" />
-        <label for="f-quantity">Quantity</label>
-        <input id="f-quantity" type="number" min="0" value="0" />
+        <div class="grid2">
+          <div>
+            <label for="f-quantity">Quantity</label>
+            <input id="f-quantity" type="number" min="0" value="0" />
+          </div>
+          <div>
+            <label for="f-threshold">Low stock alert <span class="hint">— optional</span></label>
+            <input id="f-threshold" type="number" min="1" placeholder="e.g. 5" />
+          </div>
+        </div>
         <div class="grid2">
           <div>
             <label for="f-vendor">Vendor <span class="hint">— optional</span></label>

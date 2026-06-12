@@ -42,7 +42,11 @@ function esc(s) {
   return (s ?? '').toString().replace(/[&<>"]/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
-function stockClass(q) { return q <= 0 ? 'out' : q <= 5 ? 'low' : ''; }
+function stockClass(item) {
+  if (item.quantity <= 0) return 'out';
+  const t = item.low_stock_threshold ?? 5;
+  return item.quantity <= t ? 'low' : '';
+}
 function initials(name) {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase();
 }
@@ -158,7 +162,7 @@ function renderItemList() {
     rows.forEach((i) => {
       shown++;
       const out = i.quantity <= 0;
-      const cls = stockClass(i.quantity);
+      const cls = stockClass(i);
       const stock = out ? 'Out of stock' : `${i.quantity} left`;
       html += `<div class="combo-item ${out ? 'disabled' : ''}" data-id="${i.id}" role="option">
         ${thumbHtml(i)}
@@ -193,7 +197,7 @@ function updatePreview() {
   els.preview.classList.add('show');
   els.pvThumb.innerHTML = thumbHtml(it, true);
   els.pvName.textContent = it.name;
-  const cls = stockClass(it.quantity);
+  const cls = stockClass(it);
   const word = it.quantity <= 0 ? 'Out of stock' : `${it.quantity} in stock`;
   els.pvMeta.innerHTML =
     `<span class="stock ${cls}"><span class="dot"></span>${word}</span>` +

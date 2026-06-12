@@ -86,4 +86,5 @@ for (const stmt of [
 
 // Migrations — ALTER TABLE is idempotent via try/catch (column already exists = no-op)
 try { await client.execute('ALTER TABLE items ADD COLUMN location TEXT'); } catch (_) {}
+try { await client.execute('ALTER TABLE items ADD COLUMN low_stock_threshold INTEGER'); } catch (_) {}
 

@@ -116,16 +116,17 @@ app.post('/api/checkout', async (req, res) => {
 
 /* -------- Admin: create/update/delete items -------- */
 app.post('/api/items', requireAdmin, async (req, res) => {
-  const { category, name, quantity, vendor, cost_per_unit, note, location } = req.body || {};
+  const { category, name, quantity, vendor, cost_per_unit, note, location, low_stock_threshold } = req.body || {};
   const cat = category?.trim() || 'Miscellaneous Items';
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required.' });
   const maxRow = await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?', [cat]);
+  const threshold = low_stock_threshold === '' || low_stock_threshold == null ? null : parseInt(low_stock_threshold, 10);
   const info = await db.run(
-    'INSERT INTO items (category, name, quantity, vendor, cost_per_unit, note, location, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO items (category, name, quantity, vendor, cost_per_unit, note, location, low_stock_threshold, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [cat, name.trim(), parseInt(quantity, 10) || 0,
      vendor?.trim() || null,
      cost_per_unit === '' || cost_per_unit == null ? null : parseFloat(cost_per_unit),
-     note?.trim() || null, location?.trim() || null, (maxRow.m || 0) + 1]);
+     note?.trim() || null, location?.trim() || null, threshold, (maxRow.m || 0) + 1]);
   const item = await db.get('SELECT * FROM items WHERE id = ?', [info.lastInsertRowid]);
   broadcast('item-updated', item);
   res.json(item);
@@ -134,20 +135,21 @@ app.post('/api/items', requireAdmin, async (req, res) => {
 app.put('/api/items/:id', requireAdmin, async (req, res) => {
   const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
-  const { category, name, quantity, vendor, cost_per_unit, note, location } = req.body || {};
+  const { category, name, quantity, vendor, cost_per_unit, note, location, low_stock_threshold } = req.body || {};
   const newQty = quantity == null ? item.quantity : parseInt(quantity, 10) || 0;
   const newCat = category ?? item.category;
   const maxRow = newCat !== item.category
     ? await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?', [newCat])
     : { m: item.sort_order };
   const newOrder = newCat !== item.category ? (maxRow.m || 0) + 1 : item.sort_order;
+  const threshold = low_stock_threshold === '' || low_stock_threshold == null ? null : parseInt(low_stock_threshold, 10);
 
   await db.run(
-    'UPDATE items SET category=?, name=?, quantity=?, vendor=?, cost_per_unit=?, note=?, location=?, sort_order=? WHERE id=?',
+    'UPDATE items SET category=?, name=?, quantity=?, vendor=?, cost_per_unit=?, note=?, location=?, low_stock_threshold=?, sort_order=? WHERE id=?',
     [newCat, name?.trim() || item.name, newQty,
      vendor?.trim() || null,
      cost_per_unit === '' || cost_per_unit == null ? null : parseFloat(cost_per_unit),
-     note?.trim() || null, location?.trim() || null, newOrder, item.id]);
+     note?.trim() || null, location?.trim() || null, threshold, newOrder, item.id]);
 
   if (newQty !== item.quantity) {
     await db.run(
