@@ -11,7 +11,7 @@ const app = express();
 const PORT = process.env.PORT || 4173;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'winshape1984';
 
-app.use(express.json({ limit: '12mb' })); // headroom for base64 image uploads
+app.use(express.json({ limit: '20mb' })); // headroom for base64 image / file uploads
 app.use(cookieParser());
 
 app.use('/fonts', express.static(join(__dirname, 'fonts')));
@@ -86,8 +86,8 @@ app.get('/api/categories', (_req, res) => res.json(CATEGORY_ORDER));
 app.get('/api/items', async (req, res) => {
   const includeArchived = isAdmin(req) && req.query.all === '1';
   const rows = await db.all(includeArchived
-    ? 'SELECT * FROM items ORDER BY sort_order'
-    : 'SELECT * FROM items WHERE archived = 0 ORDER BY sort_order');
+    ? 'SELECT items.*, (SELECT COUNT(*) FROM print_files WHERE item_id = items.id) AS file_count FROM items ORDER BY sort_order'
+    : 'SELECT items.*, (SELECT COUNT(*) FROM print_files WHERE item_id = items.id) AS file_count FROM items WHERE archived = 0 ORDER BY sort_order');
   rows.sort((a, b) => catRank(a.category) - catRank(b.category) || a.sort_order - b.sort_order);
   res.json(rows);
 });
@@ -250,6 +250,56 @@ app.delete('/api/history/:id', requireAdmin, async (req, res) => {
   const row = await db.get('SELECT id FROM checkouts WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Log entry not found.' });
   await db.run('DELETE FROM checkouts WHERE id = ?', [req.params.id]);
+  res.json({ ok: true });
+});
+
+/* -------- Print files -------- */
+// List files for an item (metadata only — no blob returned here)
+app.get('/api/items/:id/files', requireAdmin, async (req, res) => {
+  const files = await db.all(
+    'SELECT id, item_id, filename, mime_type, size_bytes, uploaded_at FROM print_files WHERE item_id = ? ORDER BY uploaded_at',
+    [req.params.id]
+  );
+  res.json(files);
+});
+
+// Upload a file (base64 data URL)
+app.post('/api/items/:id/files', requireAdmin, async (req, res) => {
+  const item = await db.get('SELECT id FROM items WHERE id = ?', [req.params.id]);
+  if (!item) return res.status(404).json({ error: 'Item not found.' });
+  const { filename, dataUrl } = req.body || {};
+  if (!filename || !dataUrl) return res.status(400).json({ error: 'filename and dataUrl are required.' });
+  const match = dataUrl.match(/^data:([^;]+);base64,/);
+  if (!match) return res.status(400).json({ error: 'Invalid data URL.' });
+  const mimeType = match[1];
+  const bytes = Buffer.from(dataUrl.split(',')[1], 'base64');
+  if (bytes.length > 15 * 1024 * 1024) return res.status(400).json({ error: 'File must be under 15 MB.' });
+  const info = await db.run(
+    'INSERT INTO print_files (item_id, filename, mime_type, data, size_bytes) VALUES (?, ?, ?, ?, ?)',
+    [item.id, filename, mimeType, dataUrl, bytes.length]
+  );
+  res.json({ id: info.lastInsertRowid, item_id: item.id, filename, mime_type: mimeType, size_bytes: bytes.length });
+});
+
+// Serve / download a file  (?dl=1 forces attachment, otherwise inline for browser preview)
+app.get('/api/files/:id', requireAdmin, async (req, res) => {
+  const file = await db.get('SELECT * FROM print_files WHERE id = ?', [req.params.id]);
+  if (!file) return res.status(404).json({ error: 'File not found.' });
+  const buf = Buffer.from(file.data.split(',')[1], 'base64');
+  const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
+  res.set({
+    'Content-Type': file.mime_type,
+    'Content-Disposition': `${disposition}; filename="${encodeURIComponent(file.filename)}"`,
+    'Content-Length': buf.length,
+  });
+  res.send(buf);
+});
+
+// Delete a file
+app.delete('/api/files/:id', requireAdmin, async (req, res) => {
+  const file = await db.get('SELECT id FROM print_files WHERE id = ?', [req.params.id]);
+  if (!file) return res.status(404).json({ error: 'File not found.' });
+  await db.run('DELETE FROM print_files WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
 

@@ -141,6 +141,13 @@
             <input type="file" id="f-img-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
           </div>
         </div>
+
+        <div id="f-files-section" style="display:none;">
+          <label>Print Files <span class="hint">— PDFs, layouts, or any reference doc (max 15 MB each)</span></label>
+          <div id="f-files-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="f-file-pick" style="margin-top:8px;">📎 Attach file…</button>
+          <input type="file" id="f-file-input" accept=".pdf,.ai,.eps,.png,.jpg,.jpeg,.webp,.svg,image/*,application/pdf,application/postscript" style="display:none;" />
+        </div>
       </div>
       <div class="modal-foot">
         <button class="btn btn-danger btn-sm" id="modal-delete" style="margin-right:auto;display:none;">Delete</button>

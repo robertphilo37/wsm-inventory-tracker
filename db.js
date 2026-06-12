@@ -71,6 +71,15 @@ for (const stmt of [
     sort_order INTEGER NOT NULL DEFAULT 0,
     photo_path TEXT
   )`,
+  `CREATE TABLE IF NOT EXISTS print_files (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id     INTEGER NOT NULL,
+    filename    TEXT    NOT NULL,
+    mime_type   TEXT    NOT NULL,
+    data        TEXT    NOT NULL,
+    size_bytes  INTEGER NOT NULL DEFAULT 0,
+    uploaded_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  )`,
 ]) {
   await client.execute(stmt);
 }

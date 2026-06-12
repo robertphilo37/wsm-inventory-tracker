@@ -8,6 +8,7 @@ let pendingImage = null;       // { dataUrl } chosen but not yet uploaded (new i
 let clearImage = false;        // remove existing image on save
 let pendingEmpPhoto = null;    // { dataUrl } for employee modal
 let clearEmpPhoto = false;
+let currentItemFiles = [];     // print files for the currently open item modal
 
 function toast(msg, isErr) {
   const t = $('toast');
@@ -125,7 +126,7 @@ function renderInventory() {
       const cls = stockClass(i.quantity);
       return `<tr>
         <td class="thumb-cell">${thumbHtml(i)}</td>
-        <td>${esc(i.name)}
+        <td>${esc(i.name)}${i.file_count > 0 ? `<span class="file-count-badge">📎 ${i.file_count}</span>` : ''}
           ${i.note ? `<div class="muted" style="font-size:13px;">${esc(i.note)}</div>` : ''}</td>
         <td class="num"><span class="qtypill ${cls}">${i.quantity}</span></td>
         <td class="hide-sm muted">${esc(i.vendor || '')}</td>
@@ -176,10 +177,11 @@ function setImgPreview(src) {
     $('f-img-remove').style.display = 'none';
   }
 }
-function openModal(id) {
+async function openModal(id) {
   const it = id ? items.find((i) => i.id === id) : null;
-  pendingImage = null; clearImage = false;
+  pendingImage = null; clearImage = false; currentItemFiles = [];
   $('f-img-input').value = '';
+  $('f-file-input').value = '';
   $('modal-title').textContent = it ? 'Edit item' : 'Add item';
   $('f-id').value = it ? it.id : '';
   $('f-name').value = it ? it.name : '';
@@ -190,9 +192,97 @@ function openModal(id) {
   $('f-note').value = it ? (it.note || '') : '';
   $('modal-delete').style.display = it ? '' : 'none';
   setImgPreview(it && it.image_path ? it.image_path : '');
+
+  // Print files — only for existing items
+  const filesSection = $('f-files-section');
+  if (it) {
+    filesSection.style.display = '';
+    currentItemFiles = await fetch(`/api/items/${it.id}/files`).then((r) => r.json());
+    renderFilesList();
+  } else {
+    filesSection.style.display = 'none';
+  }
+
   modal.classList.add('show');
 }
-function closeModal() { modal.classList.remove('show'); }
+function closeModal() { modal.classList.remove('show'); currentItemFiles = []; }
+
+/* ---- print files helpers ---- */
+function fileIcon(mime) {
+  if (mime === 'application/pdf') return '📄';
+  if (mime.startsWith('image/')) return '🖼';
+  if (mime.includes('postscript') || mime.includes('illustrator')) return '🎨';
+  return '📎';
+}
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+function renderFilesList() {
+  const el = $('f-files-list');
+  if (!currentItemFiles.length) {
+    el.innerHTML = '<div class="muted" style="font-size:14px;padding:6px 0;">No files attached yet.</div>';
+    return;
+  }
+  el.innerHTML = currentItemFiles.map((f) => `
+    <div class="file-row" data-fid="${f.id}">
+      <span class="file-row-icon">${fileIcon(f.mime_type)}</span>
+      <div class="file-row-info">
+        <div class="file-row-name" title="${esc(f.filename)}">${esc(f.filename)}</div>
+        <div class="file-row-meta">${fmtBytes(f.size_bytes)}</div>
+      </div>
+      <div class="file-row-actions">
+        <a class="btn btn-ghost btn-sm" href="/api/files/${f.id}" target="_blank" rel="noopener">View</a>
+        <a class="btn btn-ghost btn-sm" href="/api/files/${f.id}?dl=1" download="${esc(f.filename)}">↓</a>
+        <button class="btn btn-danger btn-sm file-del" data-fid="${f.id}">✕</button>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.file-del').forEach((btn) =>
+    btn.addEventListener('click', () => deleteFile(Number(btn.dataset.fid)))
+  );
+}
+async function deleteFile(fid) {
+  if (!confirm('Remove this file? This cannot be undone.')) return;
+  const res = await fetch(`/api/files/${fid}`, { method: 'DELETE' });
+  if (!res.ok) return toast('Delete failed.', true);
+  currentItemFiles = currentItemFiles.filter((f) => f.id !== fid);
+  renderFilesList();
+  // update badge in inventory list
+  const itemId = Number($('f-id').value);
+  const it = items.find((i) => i.id === itemId);
+  if (it) { it.file_count = Math.max(0, (it.file_count || 1) - 1); renderInventory(); }
+  toast('File removed.');
+}
+
+$('f-file-pick').addEventListener('click', () => $('f-file-input').click());
+$('f-file-input').addEventListener('change', async () => {
+  const file = $('f-file-input').files[0];
+  if (!file) return;
+  if (file.size > 15 * 1024 * 1024) return toast('File must be under 15 MB.', true);
+  const itemId = $('f-id').value;
+  if (!itemId) return toast('Save the item first, then attach files.', true);
+
+  const reader = new FileReader();
+  reader.onload = async () => {
+    toast('Uploading…');
+    const res = await fetch(`/api/items/${itemId}/files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, dataUrl: reader.result }),
+    });
+    $('f-file-input').value = '';
+    if (!res.ok) { const e = await res.json(); return toast(e.error || 'Upload failed.', true); }
+    const saved = await res.json();
+    currentItemFiles.push(saved);
+    renderFilesList();
+    // update badge
+    const it = items.find((i) => i.id === Number(itemId));
+    if (it) { it.file_count = (it.file_count || 0) + 1; renderInventory(); }
+    toast(`"${file.name}" attached.`);
+  };
+  reader.readAsDataURL(file);
+});
 $('add-item').addEventListener('click', () => openModal(null));
 $('modal-close').addEventListener('click', closeModal);
 $('modal-cancel').addEventListener('click', closeModal);
