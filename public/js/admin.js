@@ -149,6 +149,7 @@ function renderInventory() {
     return `<tr>
       <td class="thumb-cell">${thumbHtml(i)}</td>
       <td>${esc(i.name)}${i.file_count > 0 ? `<span class="file-count-badge">📎 ${i.file_count}</span>` : ''}
+        ${i.location ? `<div class="location-tag">📍 ${esc(i.location)}</div>` : ''}
         ${i.note ? `<div class="muted" style="font-size:13px;">${esc(i.note)}</div>` : ''}</td>
       <td class="hide-sm muted">${esc(i.category)}</td>
       <td class="num"><span class="qtypill ${cls}">${i.quantity}</span></td>
@@ -230,6 +231,7 @@ async function openModal(id) {
   $('f-quantity').value = it ? it.quantity : 0;
   $('f-vendor').value = it ? (it.vendor || '') : '';
   $('f-cost').value = it && it.cost_per_unit != null ? it.cost_per_unit : '';
+  $('f-location').value = it ? (it.location || '') : '';
   $('f-note').value = it ? (it.note || '') : '';
   $('modal-delete').style.display = it ? '' : 'none';
   setImgPreview(it && it.image_path ? it.image_path : '');
@@ -355,6 +357,7 @@ $('modal-save').addEventListener('click', async () => {
     name: $('f-name').value, category: $('f-category').value,
     quantity: $('f-quantity').value, vendor: $('f-vendor').value,
     cost_per_unit: $('f-cost').value, note: $('f-note').value,
+    location: $('f-location').value,
   };
   if (!payload.name.trim()) return toast('Name is required.', true);
   const res = await fetch(id ? `/api/items/${id}` : '/api/items', {

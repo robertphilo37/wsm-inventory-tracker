@@ -83,3 +83,7 @@ for (const stmt of [
 ]) {
   await client.execute(stmt);
 }
+
+// Migrations — ALTER TABLE is idempotent via try/catch (column already exists = no-op)
+try { await client.execute('ALTER TABLE items ADD COLUMN location TEXT'); } catch (_) {}
+

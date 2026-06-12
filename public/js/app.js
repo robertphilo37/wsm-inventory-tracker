@@ -197,7 +197,8 @@ function updatePreview() {
   const word = it.quantity <= 0 ? 'Out of stock' : `${it.quantity} in stock`;
   els.pvMeta.innerHTML =
     `<span class="stock ${cls}"><span class="dot"></span>${word}</span>` +
-    (it.vendor ? ` · ${esc(it.vendor)}` : '');
+    (it.vendor ? ` · ${esc(it.vendor)}` : '') +
+    (it.location ? `<div class="pv-location">📍 ${esc(it.location)}</div>` : '');
   els.qty.max = Math.max(1, it.quantity);
 }
 
