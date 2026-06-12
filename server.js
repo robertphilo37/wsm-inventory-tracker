@@ -61,6 +61,21 @@ function broadcast(event, data) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Health / diagnostics                                               */
+/* ------------------------------------------------------------------ */
+app.get('/api/health', async (_req, res) => {
+  const usingTurso = !!process.env.TURSO_DATABASE_URL;
+  const hasToken   = !!process.env.TURSO_AUTH_TOKEN;
+  try {
+    const { c: items } = await db.get('SELECT COUNT(*) c FROM items');
+    const { c: emps  } = await db.get('SELECT COUNT(*) c FROM employees');
+    res.json({ ok: true, usingTurso, hasToken, items, employees: emps });
+  } catch (e) {
+    res.status(500).json({ ok: false, usingTurso, hasToken, error: e.message });
+  }
+});
+
+/* ------------------------------------------------------------------ */
 /*  Inventory                                                          */
 /* ------------------------------------------------------------------ */
 const CATEGORY_ORDER = ['Miscellaneous Items', 'Enrichment Retreat', 'Marriage Discipleship', 'R&R Retreat'];
