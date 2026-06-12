@@ -193,17 +193,22 @@ async function openModal(id) {
   $('modal-delete').style.display = it ? '' : 'none';
   setImgPreview(it && it.image_path ? it.image_path : '');
 
-  // Print files — only for existing items
+  // Show modal immediately — don't block on async file fetch
   const filesSection = $('f-files-section');
+  filesSection.style.display = it ? '' : 'none';
   if (it) {
-    filesSection.style.display = '';
-    currentItemFiles = await fetch(`/api/items/${it.id}/files`).then((r) => r.json());
-    renderFilesList();
-  } else {
-    filesSection.style.display = 'none';
+    $('f-files-list').innerHTML = '<div class="muted" style="font-size:14px;padding:6px 0;">Loading…</div>';
   }
-
   modal.classList.add('show');
+
+  // Load print files in background after modal is visible
+  if (it) {
+    try {
+      const res = await fetch(`/api/items/${it.id}/files`);
+      currentItemFiles = res.ok ? await res.json() : [];
+    } catch (_) { currentItemFiles = []; }
+    renderFilesList();
+  }
 }
 function closeModal() { modal.classList.remove('show'); currentItemFiles = []; }
 
