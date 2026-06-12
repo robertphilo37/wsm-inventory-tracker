@@ -111,49 +111,54 @@ function renderInventory() {
   const container = $('inventory-list');
   container.innerHTML = '';
 
-  let shown = 0;
-  categories.forEach((cat) => {
-    if (catSel && cat !== catSel) return;
-    let rows = items.filter((i) => i.category === cat);
-    if (q) rows = rows.filter((i) =>
-      i.name.toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q));
-    if (!rows.length) return;
-    rows = sortRows(rows);
-    shown += rows.length;
+  let rows = items.slice();
+  if (catSel) rows = rows.filter((i) => i.category === catSel);
+  if (q) rows = rows.filter((i) =>
+    i.name.toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q) ||
+    i.category.toLowerCase().includes(q));
+  rows = sortRows(rows);
 
-    const totalUnits = rows.reduce((s, i) => s + i.quantity, 0);
-    const body = rows.map((i) => {
-      const cls = stockClass(i.quantity);
-      return `<tr>
-        <td class="thumb-cell">${thumbHtml(i)}</td>
-        <td>${esc(i.name)}${i.file_count > 0 ? `<span class="file-count-badge">📎 ${i.file_count}</span>` : ''}
-          ${i.note ? `<div class="muted" style="font-size:13px;">${esc(i.note)}</div>` : ''}</td>
-        <td class="num"><span class="qtypill ${cls}">${i.quantity}</span></td>
-        <td class="hide-sm muted">${esc(i.vendor || '')}</td>
-        <td class="num hide-sm muted">${money(i.cost_per_unit)}</td>
-        <td><div class="row-actions">
-          <button class="btn btn-ghost btn-sm" data-edit="${i.id}">Edit</button>
-        </div></td>
-      </tr>`;
-    }).join('');
+  if (!rows.length) {
+    container.innerHTML = '<div class="empty">No items match your search.</div>';
+    return;
+  }
 
-    container.insertAdjacentHTML('beforeend', `
-      <div class="cat-head"><h3>${esc(cat)}</h3>
-        <span class="count">${rows.length} items · ${totalUnits} units</span></div>
-      <div class="cat-bar"></div>
-      <div class="card" style="padding:6px 6px;">
-        <table>
-          <thead><tr>
-            <th class="thumb-cell"></th>
-            <th>Item</th><th class="num">Qty</th>
-            <th class="hide-sm">Vendor</th><th class="num hide-sm">Cost</th><th></th>
-          </tr></thead>
-          <tbody>${body}</tbody>
-        </table>
-      </div>`);
-  });
+  const totalUnits = rows.reduce((s, i) => s + i.quantity, 0);
+  const body = rows.map((i) => {
+    const cls = stockClass(i.quantity);
+    return `<tr>
+      <td class="thumb-cell">${thumbHtml(i)}</td>
+      <td>${esc(i.name)}${i.file_count > 0 ? `<span class="file-count-badge">📎 ${i.file_count}</span>` : ''}
+        ${i.note ? `<div class="muted" style="font-size:13px;">${esc(i.note)}</div>` : ''}</td>
+      <td class="hide-sm muted">${esc(i.category)}</td>
+      <td class="num"><span class="qtypill ${cls}">${i.quantity}</span></td>
+      <td class="hide-sm muted">${esc(i.vendor || '')}</td>
+      <td class="num hide-sm muted">${money(i.cost_per_unit)}</td>
+      <td><div class="row-actions">
+        <button class="btn btn-ghost btn-sm" data-edit="${i.id}">Edit</button>
+      </div></td>
+    </tr>`;
+  }).join('');
 
-  if (!shown) container.innerHTML = '<div class="empty">No items match your search.</div>';
+  container.innerHTML = `
+    <div class="cat-head">
+      <span class="count">${rows.length} item${rows.length !== 1 ? 's' : ''} · ${totalUnits} units</span>
+    </div>
+    <div class="card" style="padding:6px 6px;">
+      <table>
+        <thead><tr>
+          <th class="thumb-cell"></th>
+          <th>Item</th>
+          <th class="hide-sm">Retreat</th>
+          <th class="num">Qty</th>
+          <th class="hide-sm">Vendor</th>
+          <th class="num hide-sm">Cost</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+
   container.querySelectorAll('[data-edit]').forEach((b) =>
     b.addEventListener('click', () => openModal(Number(b.dataset.edit))));
 }
