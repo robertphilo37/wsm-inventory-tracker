@@ -1,24 +1,24 @@
-// Startup wrapper: auto-seed DB on first boot, then launch the server.
-import { existsSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+// Startup wrapper: seed DB on first boot only (checks actual row count, not local file).
+import { db } from './db.js';
 import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dbPath = join(__dirname, 'data.db');
 
-if (!existsSync(dbPath)) {
-  console.log('No database found — seeding items from CSV...');
-  const seed = spawnSync('node', ['seed.js'], { stdio: 'inherit', cwd: __dirname });
-  if (seed.status !== 0) { console.error('Seed failed'); process.exit(1); }
+const { c: itemCount } = await db.get('SELECT COUNT(*) c FROM items');
+const { c: empCount  } = await db.get('SELECT COUNT(*) c FROM employees');
 
-  console.log('Seeding team from WinShape Marriage website...');
-  const team = spawnSync('node', ['seed-team.js'], { stdio: 'inherit', cwd: __dirname });
-  if (team.status !== 0) {
-    // Non-fatal — the app works fine without headshots; admin can add them later.
-    console.warn('Team seed failed (non-fatal). Continuing without headshots.');
-  }
+if (itemCount === 0) {
+  console.log('Items table is empty — seeding from CSV…');
+  const r = spawnSync('node', ['seed.js'], { stdio: 'inherit', cwd: __dirname });
+  if (r.status !== 0) { console.error('Item seed failed'); process.exit(1); }
 }
 
-// Hand off to the real server.
+if (empCount === 0) {
+  console.log('Employees table is empty — seeding team…');
+  const r = spawnSync('node', ['seed-team.js'], { stdio: 'inherit', cwd: __dirname });
+  if (r.status !== 0) console.warn('Team seed failed (non-fatal). Continuing without headshots.');
+}
+
 await import('./server.js');
