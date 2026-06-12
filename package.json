@@ -12,6 +12,7 @@
     "reset": "rm -f data.db data.db-wal data.db-shm && node seed.js && node seed-team.js"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.3",
     "better-sqlite3": "^11.8.1",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",

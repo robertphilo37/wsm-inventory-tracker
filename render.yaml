@@ -11,5 +11,8 @@ services:
       - key: PORT
         value: 10000
       - key: ADMIN_PASSWORD
-        generateValue: false
         value: winshape1984
+      - key: TURSO_DATABASE_URL
+        value: libsql://wsm-inventory-rphilo.aws-us-east-1.turso.io
+      - key: TURSO_AUTH_TOKEN
+        sync: false

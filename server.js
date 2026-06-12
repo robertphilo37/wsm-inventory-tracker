@@ -2,7 +2,6 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { db } from './db.js';
@@ -12,24 +11,18 @@ const app = express();
 const PORT = process.env.PORT || 4173;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'winshape1984';
 
-const UPLOAD_DIR = join(__dirname, 'public', 'uploads');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-app.use(express.json({ limit: '8mb' })); // headroom for base64 image uploads
+app.use(express.json({ limit: '12mb' })); // headroom for base64 image uploads
 app.use(cookieParser());
 
-// Serve fonts + logo from the project root so the existing assets are reused.
 app.use('/fonts', express.static(join(__dirname, 'fonts')));
 app.get('/WSM_logo.png', (_req, res) => res.sendFile(join(__dirname, 'WSM_logo.png')));
 app.use(express.static(join(__dirname, 'public')));
 
 /* ------------------------------------------------------------------ */
-/*  Auth (lightweight token — prototype-grade)                         */
+/*  Auth                                                               */
 /* ------------------------------------------------------------------ */
 const sessions = new Set();
-function isAdmin(req) {
-  return req.cookies && sessions.has(req.cookies.wsm_admin);
-}
+function isAdmin(req) { return req.cookies && sessions.has(req.cookies.wsm_admin); }
 function requireAdmin(req, res, next) {
   if (isAdmin(req)) return next();
   res.status(401).json({ error: 'Not authorized' });
@@ -52,20 +45,15 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/me', (req, res) => res.json({ admin: isAdmin(req) }));
 
 /* ------------------------------------------------------------------ */
-/*  Server-Sent Events — live inventory sync                           */
+/*  Server-Sent Events                                                 */
 /* ------------------------------------------------------------------ */
 let clients = [];
 app.get('/api/events', (req, res) => {
-  res.set({
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  });
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   res.flushHeaders();
   res.write(': connected\n\n');
-  const client = res;
-  clients.push(client);
-  req.on('close', () => { clients = clients.filter((c) => c !== client); });
+  clients.push(res);
+  req.on('close', () => { clients = clients.filter((c) => c !== res); });
 });
 function broadcast(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -73,197 +61,184 @@ function broadcast(event, data) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Inventory API                                                      */
+/*  Inventory                                                          */
 /* ------------------------------------------------------------------ */
 const CATEGORY_ORDER = ['Miscellaneous Items', 'Enrichment Retreat', 'Marriage Discipleship', 'R&R Retreat'];
 function catRank(c) { const i = CATEGORY_ORDER.indexOf(c); return i === -1 ? 99 : i; }
 
-app.get('/api/items', (req, res) => {
+app.get('/api/categories', (_req, res) => res.json(CATEGORY_ORDER));
+
+app.get('/api/items', async (req, res) => {
   const includeArchived = isAdmin(req) && req.query.all === '1';
-  const rows = db.prepare(
-    `SELECT * FROM items ${includeArchived ? '' : 'WHERE archived = 0'} ORDER BY sort_order`
-  ).all();
+  const rows = await db.all(includeArchived
+    ? 'SELECT * FROM items ORDER BY sort_order'
+    : 'SELECT * FROM items WHERE archived = 0 ORDER BY sort_order');
   rows.sort((a, b) => catRank(a.category) - catRank(b.category) || a.sort_order - b.sort_order);
   res.json(rows);
 });
 
-app.get('/api/categories', (_req, res) => res.json(CATEGORY_ORDER));
-
-// Public checkout — decrements quantity and records who took what.
-app.post('/api/checkout', (req, res) => {
+app.post('/api/checkout', async (req, res) => {
   const { item_id, quantity, person_name, notes } = req.body || {};
   const qty = parseInt(quantity, 10);
   const name = (person_name || '').trim();
   if (!item_id || !qty || qty < 1) return res.status(400).json({ error: 'Pick an item and a quantity of at least 1.' });
   if (!name) return res.status(400).json({ error: 'Please enter your name.' });
 
-  const item = db.prepare('SELECT * FROM items WHERE id = ? AND archived = 0').get(item_id);
+  const item = await db.get('SELECT * FROM items WHERE id = ? AND archived = 0', [item_id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
   if (qty > item.quantity) return res.status(400).json({ error: `Only ${item.quantity} of "${item.name}" left.` });
 
-  const tx = db.transaction(() => {
-    db.prepare('UPDATE items SET quantity = quantity - ? WHERE id = ?').run(qty, item_id);
-    db.prepare(
-      `INSERT INTO checkouts (item_id, item_name, category, quantity, person_name, notes, kind)
-       VALUES (?, ?, ?, ?, ?, ?, 'checkout')`
-    ).run(item_id, item.name, item.category, qty, name, (notes || '').trim() || null);
-  });
-  tx();
+  await db.batch([
+    { sql: 'UPDATE items SET quantity = quantity - ? WHERE id = ?', args: [qty, item_id] },
+    { sql: 'INSERT INTO checkouts (item_id, item_name, category, quantity, person_name, notes, kind) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      args: [item_id, item.name, item.category, qty, name, (notes || '').trim() || null, 'checkout'] },
+  ]);
 
-  const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(item_id);
+  const updated = await db.get('SELECT * FROM items WHERE id = ?', [item_id]);
   broadcast('item-updated', updated);
   res.json({ ok: true, item: updated });
 });
 
-/* -------- Admin-only item management -------- */
-app.post('/api/items', requireAdmin, (req, res) => {
+/* -------- Admin: create/update/delete items -------- */
+app.post('/api/items', requireAdmin, async (req, res) => {
   const { category, name, quantity, vendor, cost_per_unit, note } = req.body || {};
   if (!name?.trim() || !category) return res.status(400).json({ error: 'Name and category are required.' });
-  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?').get(category).m;
-  const info = db.prepare(
-    `INSERT INTO items (category, name, quantity, vendor, cost_per_unit, note, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(category, name.trim(), parseInt(quantity, 10) || 0, vendor?.trim() || null,
-        cost_per_unit === '' || cost_per_unit == null ? null : parseFloat(cost_per_unit),
-        note?.trim() || null, maxOrder + 1);
-  const item = db.prepare('SELECT * FROM items WHERE id = ?').get(info.lastInsertRowid);
+  const maxRow = await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?', [category]);
+  const info = await db.run(
+    'INSERT INTO items (category, name, quantity, vendor, cost_per_unit, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [category, name.trim(), parseInt(quantity, 10) || 0,
+     vendor?.trim() || null,
+     cost_per_unit === '' || cost_per_unit == null ? null : parseFloat(cost_per_unit),
+     note?.trim() || null, (maxRow.m || 0) + 1]);
+  const item = await db.get('SELECT * FROM items WHERE id = ?', [info.lastInsertRowid]);
   broadcast('item-updated', item);
   res.json(item);
 });
 
-app.put('/api/items/:id', requireAdmin, (req, res) => {
-  const item = db.prepare('SELECT * FROM items WHERE id = ?').get(req.params.id);
+app.put('/api/items/:id', requireAdmin, async (req, res) => {
+  const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
   const { category, name, quantity, vendor, cost_per_unit, note } = req.body || {};
   const newQty = quantity == null ? item.quantity : parseInt(quantity, 10) || 0;
   const newCat = category ?? item.category;
-  // When an item moves to a different retreat, drop it at the end of that list.
-  const newOrder = newCat !== item.category
-    ? db.prepare('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?').get(newCat).m + 1
-    : item.sort_order;
-  db.prepare(
-    `UPDATE items SET category=?, name=?, quantity=?, vendor=?, cost_per_unit=?, note=?, sort_order=? WHERE id=?`
-  ).run(newCat, name?.trim() || item.name, newQty,
-        vendor?.trim() || null,
-        cost_per_unit === '' || cost_per_unit == null ? null : parseFloat(cost_per_unit),
-        note?.trim() || null, newOrder, item.id);
-  // Log manual stock corrections so the history stays honest.
+  const maxRow = newCat !== item.category
+    ? await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM items WHERE category = ?', [newCat])
+    : { m: item.sort_order };
+  const newOrder = newCat !== item.category ? (maxRow.m || 0) + 1 : item.sort_order;
+
+  await db.run(
+    'UPDATE items SET category=?, name=?, quantity=?, vendor=?, cost_per_unit=?, note=?, sort_order=? WHERE id=?',
+    [newCat, name?.trim() || item.name, newQty,
+     vendor?.trim() || null,
+     cost_per_unit === '' || cost_per_unit == null ? null : parseFloat(cost_per_unit),
+     note?.trim() || null, newOrder, item.id]);
+
   if (newQty !== item.quantity) {
-    db.prepare(
-      `INSERT INTO checkouts (item_id, item_name, category, quantity, person_name, notes, kind)
-       VALUES (?, ?, ?, ?, 'Admin', ?, 'adjustment')`
-    ).run(item.id, name?.trim() || item.name, category ?? item.category,
-          newQty - item.quantity, `Stock set to ${newQty} (was ${item.quantity})`);
+    await db.run(
+      'INSERT INTO checkouts (item_id, item_name, category, quantity, person_name, notes, kind) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [item.id, name?.trim() || item.name, newCat, newQty - item.quantity, 'Admin',
+       `Stock set to ${newQty} (was ${item.quantity})`, 'adjustment']);
   }
-  const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(item.id);
+  const updated = await db.get('SELECT * FROM items WHERE id = ?', [item.id]);
   broadcast('item-updated', updated);
   res.json(updated);
 });
 
-app.delete('/api/items/:id', requireAdmin, (req, res) => {
-  db.prepare('UPDATE items SET archived = 1 WHERE id = ?').run(req.params.id);
+app.delete('/api/items/:id', requireAdmin, async (req, res) => {
+  await db.run('UPDATE items SET archived = 1 WHERE id = ?', [req.params.id]);
   broadcast('item-removed', { id: Number(req.params.id) });
   res.json({ ok: true });
 });
 
-/* -------- Item image upload (admin) -------- */
-const MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
-app.post('/api/items/:id/image', requireAdmin, (req, res) => {
-  const item = db.prepare('SELECT * FROM items WHERE id = ?').get(req.params.id);
+/* -------- Item images (stored as base64 data URLs in the DB) -------- */
+const VALID_IMG = /^data:(image\/(?:png|jpe?g|webp|gif));base64,/;
+
+app.post('/api/items/:id/image', requireAdmin, async (req, res) => {
+  const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
   const { dataUrl } = req.body || {};
-  const m = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl || '');
-  if (!m || !MIME_EXT[m[1]]) return res.status(400).json({ error: 'Please upload a PNG, JPG, WEBP, or GIF image.' });
-  const buf = Buffer.from(m[2], 'base64');
-  if (buf.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Image must be under 6 MB.' });
-
-  // Clear any prior file so we don't orphan it on extension change.
-  if (item.image_path) { try { fs.unlinkSync(join(__dirname, 'public', item.image_path)); } catch {} }
-  const rel = `/uploads/item-${item.id}.${MIME_EXT[m[1]]}`;
-  fs.writeFileSync(join(__dirname, 'public', rel), buf);
-  db.prepare('UPDATE items SET image_path = ?, has_picture = 1 WHERE id = ?').run(rel, item.id);
-  const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(item.id);
+  if (!VALID_IMG.test(dataUrl || '')) return res.status(400).json({ error: 'Please upload a PNG, JPG, WEBP, or GIF image.' });
+  const bytes = Buffer.from(dataUrl.split(',')[1], 'base64');
+  if (bytes.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Image must be under 6 MB.' });
+  await db.run('UPDATE items SET image_path = ?, has_picture = 1 WHERE id = ?', [dataUrl, item.id]);
+  const updated = await db.get('SELECT * FROM items WHERE id = ?', [item.id]);
   broadcast('item-updated', updated);
   res.json(updated);
 });
 
-app.delete('/api/items/:id/image', requireAdmin, (req, res) => {
-  const item = db.prepare('SELECT * FROM items WHERE id = ?').get(req.params.id);
+app.delete('/api/items/:id/image', requireAdmin, async (req, res) => {
+  const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
-  if (item.image_path) { try { fs.unlinkSync(join(__dirname, 'public', item.image_path)); } catch {} }
-  db.prepare('UPDATE items SET image_path = NULL WHERE id = ?').run(item.id);
-  const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(item.id);
+  await db.run('UPDATE items SET image_path = NULL WHERE id = ?', [item.id]);
+  const updated = await db.get('SELECT * FROM items WHERE id = ?', [item.id]);
   broadcast('item-updated', updated);
   res.json(updated);
 });
 
 /* -------- Team / employees -------- */
-// Public list (the checkout form's name picker needs it); only active members.
-app.get('/api/employees', (req, res) => {
+app.get('/api/employees', async (req, res) => {
   const all = isAdmin(req) && req.query.all === '1';
-  const rows = db.prepare(
-    `SELECT * FROM employees ${all ? '' : 'WHERE active = 1'} ORDER BY sort_order, name COLLATE NOCASE`
-  ).all();
+  const rows = await db.all(all
+    ? 'SELECT * FROM employees ORDER BY sort_order, name'
+    : 'SELECT * FROM employees WHERE active = 1 ORDER BY sort_order, name');
   res.json(rows);
 });
-app.post('/api/employees', requireAdmin, (req, res) => {
+
+app.post('/api/employees', requireAdmin, async (req, res) => {
   const name = (req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Name is required.' });
-  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) m FROM employees').get().m;
-  const info = db.prepare('INSERT INTO employees (name, sort_order) VALUES (?, ?)').run(name, maxOrder + 1);
-  res.json(db.prepare('SELECT * FROM employees WHERE id = ?').get(info.lastInsertRowid));
+  const maxRow = await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM employees');
+  const info = await db.run('INSERT INTO employees (name, sort_order) VALUES (?, ?)', [name, (maxRow.m || 0) + 1]);
+  res.json(await db.get('SELECT * FROM employees WHERE id = ?', [info.lastInsertRowid]));
 });
-app.put('/api/employees/:id', requireAdmin, (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+
+app.put('/api/employees/:id', requireAdmin, async (req, res) => {
+  const emp = await db.get('SELECT * FROM employees WHERE id = ?', [req.params.id]);
   if (!emp) return res.status(404).json({ error: 'Not found.' });
   const name = req.body?.name != null ? (req.body.name || '').trim() : emp.name;
   const active = req.body?.active != null ? (req.body.active ? 1 : 0) : emp.active;
   if (!name) return res.status(400).json({ error: 'Name is required.' });
-  db.prepare('UPDATE employees SET name = ?, active = ? WHERE id = ?').run(name, active, emp.id);
-  res.json(db.prepare('SELECT * FROM employees WHERE id = ?').get(emp.id));
-});
-app.delete('/api/employees/:id', requireAdmin, (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (emp?.photo_path) { try { fs.unlinkSync(join(__dirname, 'public', emp.photo_path)); } catch {} }
-  db.prepare('DELETE FROM employees WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
-});
-app.post('/api/employees/:id/photo', requireAdmin, (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found.' });
-  const { dataUrl } = req.body || {};
-  const m = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl || '');
-  if (!m || !MIME_EXT[m[1]]) return res.status(400).json({ error: 'Please upload a PNG, JPG, or WEBP image.' });
-  const buf = Buffer.from(m[2], 'base64');
-  if (buf.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Image must be under 6 MB.' });
-  if (emp.photo_path) { try { fs.unlinkSync(join(__dirname, 'public', emp.photo_path)); } catch {} }
-  const rel = `/uploads/employee-${emp.id}.${MIME_EXT[m[1]]}`;
-  fs.writeFileSync(join(__dirname, 'public', rel), buf);
-  db.prepare('UPDATE employees SET photo_path = ? WHERE id = ?').run(rel, emp.id);
-  res.json(db.prepare('SELECT * FROM employees WHERE id = ?').get(emp.id));
-});
-app.delete('/api/employees/:id/photo', requireAdmin, (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found.' });
-  if (emp.photo_path) { try { fs.unlinkSync(join(__dirname, 'public', emp.photo_path)); } catch {} }
-  db.prepare('UPDATE employees SET photo_path = NULL WHERE id = ?').run(emp.id);
-  res.json(db.prepare('SELECT * FROM employees WHERE id = ?').get(emp.id));
+  await db.run('UPDATE employees SET name = ?, active = ? WHERE id = ?', [name, active, emp.id]);
+  res.json(await db.get('SELECT * FROM employees WHERE id = ?', [emp.id]));
 });
 
-/* -------- Checkout history (admin) -------- */
-app.get('/api/history', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT * FROM checkouts ORDER BY datetime(created_at) DESC, id DESC LIMIT 500').all();
+app.delete('/api/employees/:id', requireAdmin, async (req, res) => {
+  await db.run('DELETE FROM employees WHERE id = ?', [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.post('/api/employees/:id/photo', requireAdmin, async (req, res) => {
+  const emp = await db.get('SELECT * FROM employees WHERE id = ?', [req.params.id]);
+  if (!emp) return res.status(404).json({ error: 'Not found.' });
+  const { dataUrl } = req.body || {};
+  if (!VALID_IMG.test(dataUrl || '')) return res.status(400).json({ error: 'Please upload a PNG, JPG, or WEBP image.' });
+  const bytes = Buffer.from(dataUrl.split(',')[1], 'base64');
+  if (bytes.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Image must be under 6 MB.' });
+  await db.run('UPDATE employees SET photo_path = ? WHERE id = ?', [dataUrl, emp.id]);
+  res.json(await db.get('SELECT * FROM employees WHERE id = ?', [emp.id]));
+});
+
+app.delete('/api/employees/:id/photo', requireAdmin, async (req, res) => {
+  const emp = await db.get('SELECT * FROM employees WHERE id = ?', [req.params.id]);
+  if (!emp) return res.status(404).json({ error: 'Not found.' });
+  await db.run('UPDATE employees SET photo_path = NULL WHERE id = ?', [emp.id]);
+  res.json(await db.get('SELECT * FROM employees WHERE id = ?', [emp.id]));
+});
+
+/* -------- Checkout history -------- */
+app.get('/api/history', requireAdmin, async (_req, res) => {
+  const rows = await db.all('SELECT * FROM checkouts ORDER BY datetime(created_at) DESC, id DESC LIMIT 500');
   res.json(rows);
 });
 
-app.delete('/api/history/:id', requireAdmin, (req, res) => {
-  const row = db.prepare('SELECT id FROM checkouts WHERE id = ?').get(req.params.id);
+app.delete('/api/history/:id', requireAdmin, async (req, res) => {
+  const row = await db.get('SELECT id FROM checkouts WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Log entry not found.' });
-  db.prepare('DELETE FROM checkouts WHERE id = ?').run(req.params.id);
+  await db.run('DELETE FROM checkouts WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
 
-/* -------- QR code for the public form -------- */
+/* -------- QR code -------- */
 app.get('/api/qr', requireAdmin, async (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
   const url = req.query.url || `${base}/`;
@@ -271,10 +246,9 @@ app.get('/api/qr', requireAdmin, async (req, res) => {
   res.json({ url, dataUrl });
 });
 
-/* -------- Page routes -------- */
 app.get('/admin', (_req, res) => res.sendFile(join(__dirname, 'public', 'admin.html')));
 
 app.listen(PORT, () => {
-  console.log(`WSM Inventory running → http://localhost:${PORT}`);
-  console.log(`Admin dashboard      → http://localhost:${PORT}/admin   (password: ${ADMIN_PASSWORD})`);
+  console.log(`WSM Inventory → http://localhost:${PORT}`);
+  console.log(`Admin         → http://localhost:${PORT}/admin   (password: ${ADMIN_PASSWORD})`);
 });
