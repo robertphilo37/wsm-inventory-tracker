@@ -26,7 +26,7 @@ function money(n) { return n == null ? '' : '$' + Number(n).toFixed(2); }
 function initials(name) { return name.split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase(); }
 function thumbHtml(i) {
   return i.image_path
-    ? `<span class="thumb" style="background-image:url('${esc(i.image_path)}')"></span>`
+    ? `<span class="thumb thumb-zoomable" data-img="${esc(i.image_path)}" style="background-image:url('${esc(i.image_path)}')"></span>`
     : `<span class="thumb thumb-ph">${esc(initials(i.name))}</span>`;
 }
 function empThumbHtml(e, lg) {
@@ -35,6 +35,19 @@ function empThumbHtml(e, lg) {
     ? `<span class="${cls}" style="background-image:url('${esc(e.photo_path)}')"></span>`
     : `<span class="${cls} thumb-ph">${esc(initials(e.name))}</span>`;
 }
+
+/* ---------------- lightbox ---------------- */
+const lightbox = $('lightbox');
+const lightboxImg = $('lightbox-img');
+function openLightbox(src) { lightboxImg.src = src; lightbox.classList.add('show'); }
+function closeLightbox() { lightbox.classList.remove('show'); lightboxImg.src = ''; }
+$('lightbox-close').addEventListener('click', closeLightbox);
+lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeLightbox(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('.thumb-zoomable');
+  if (t?.dataset.img) openLightbox(t.dataset.img);
+});
 
 /* ---------------- auth ---------------- */
 async function checkAuth() {
