@@ -5,8 +5,10 @@ let categories = [];
 let history = [];
 let employees = [];
 let pendingImage = null;       // { dataUrl } chosen but not yet uploaded (new items)
+let imagePickError = null;     // set when a chosen file couldn't be read/resized
 let clearImage = false;        // remove existing image on save
 let pendingEmpPhoto = null;    // { dataUrl } for employee modal
+let empPickError = null;
 let clearEmpPhoto = false;
 let currentItemFiles = [];     // print files for the currently open item modal
 
@@ -216,6 +218,81 @@ $('search').addEventListener('input', renderInventory);
 $('cat-filter').addEventListener('change', renderInventory);
 $('low-stock-btn').addEventListener('click', () => { showLowOnly = !showLowOnly; renderInventory(); });
 
+// POST (or DELETE, when body is null) a photo. Returns null on success, or an
+// error string to show. Never throws — a network drop must surface, not vanish.
+async function sendPhoto(url, body, fallbackMsg) {
+  try {
+    const res = body
+      ? await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      : await fetch(url, { method: 'DELETE' });
+    if (res.ok) return null;
+    if (res.status === 401) return 'Your admin session expired — log in again and retry.';
+    // Error bodies aren't guaranteed to be JSON (proxy timeouts, 413s, crashes).
+    const text = await res.text().catch(() => '');
+    let msg = '';
+    try { msg = JSON.parse(text).error || ''; } catch { /* not JSON */ }
+    return msg || `${fallbackMsg} (server said ${res.status})`;
+  } catch {
+    return `${fallbackMsg} Check your connection and try again.`;
+  }
+}
+
+/* ---------------- image preparation ----------------
+   Phone photos are routinely 8-15 MB and iPhones hand back HEIC, neither of
+   which the API accepts. Decode, downscale and re-encode in the browser so
+   what we send is always a modest PNG/JPEG the server will take. */
+const MAX_IMG_DIM = 1600;
+const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
+const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
+
+function dataUrlBytes(dataUrl) {
+  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  return Math.floor(b64.length * 3 / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
+}
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode-failed')); };
+    img.src = url;
+  });
+}
+
+// Resolves to a data URL, or throws an Error whose message is safe to show.
+async function prepareImage(file) {
+  if (file.size > MAX_SOURCE_BYTES) throw new Error('That image is too large to process. Please pick one under 50 MB.');
+
+  let img;
+  try {
+    img = await loadImage(file);
+  } catch {
+    throw new Error("Couldn't read that image. Save it as a JPG or PNG and try again.");
+  }
+  if (!img.naturalWidth || !img.naturalHeight) throw new Error("Couldn't read that image. Save it as a JPG or PNG and try again.");
+
+  const scale = Math.min(1, MAX_IMG_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext('2d');
+
+  // PNG sources keep transparency; everything else (incl. HEIC) becomes JPEG.
+  const keepPng = file.type === 'image/png';
+  if (!keepPng) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  let dataUrl = keepPng ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.85);
+  // A huge PNG screenshot can still be over the cap — fall back to JPEG, then lower quality.
+  for (const q of [0.85, 0.7, 0.55, 0.4]) {
+    if (dataUrlBytes(dataUrl) <= MAX_UPLOAD_BYTES) break;
+    dataUrl = canvas.toDataURL('image/jpeg', q);
+  }
+  if (dataUrlBytes(dataUrl) > MAX_UPLOAD_BYTES) throw new Error('That image is too large even after resizing. Please pick a smaller one.');
+  return dataUrl;
+}
+
 /* ---------------- item modal ---------------- */
 const modal = $('item-modal');
 function setImgPreview(src) {
@@ -234,7 +311,7 @@ function setImgPreview(src) {
 }
 async function openModal(id) {
   const it = id ? items.find((i) => i.id === id) : null;
-  pendingImage = null; clearImage = false; currentItemFiles = [];
+  pendingImage = null; clearImage = false; imagePickError = null; currentItemFiles = [];
   $('f-img-input').value = '';
   $('f-file-input').value = '';
   $('modal-title').textContent = it ? 'Edit item' : 'Add item';
@@ -352,16 +429,28 @@ modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); }
 
 // image picking
 $('f-img-pick').addEventListener('click', () => $('f-img-input').click());
-$('f-img-input').addEventListener('change', () => {
+$('f-img-input').addEventListener('change', async () => {
   const file = $('f-img-input').files[0];
   if (!file) return;
-  if (file.size > 6 * 1024 * 1024) return toast('Image must be under 6 MB.', true);
-  const reader = new FileReader();
-  reader.onload = () => { pendingImage = { dataUrl: reader.result }; clearImage = false; setImgPreview(reader.result); };
-  reader.readAsDataURL(file);
+  toast('Preparing image…');
+  try {
+    const dataUrl = await prepareImage(file);
+    pendingImage = { dataUrl };
+    clearImage = false;
+    imagePickError = null;
+    setImgPreview(dataUrl);
+    toast('Image ready — press Save to store it.');
+  } catch (err) {
+    pendingImage = null;
+    imagePickError = err.message;
+    $('f-img-input').value = '';
+    const editing = items.find((i) => i.id === Number($('f-id').value));
+    setImgPreview(editing?.image_path || '');
+    toast(err.message, true);
+  }
 });
 $('f-img-remove').addEventListener('click', () => {
-  pendingImage = null; clearImage = true; $('f-img-input').value = '';
+  pendingImage = null; clearImage = true; imagePickError = null; $('f-img-input').value = '';
   setImgPreview('');
 });
 
@@ -383,19 +472,26 @@ $('modal-save').addEventListener('click', async () => {
   if (!res.ok) { const e = await res.json(); return toast(e.error || 'Save failed.', true); }
   const saved = await res.json();
 
-  // image side-effects
+  // image side-effects — a failure here must not be reported as a clean save
+  let imageError = imagePickError;
   if (pendingImage) {
-    const ir = await fetch(`/api/items/${saved.id}/image`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pendingImage),
-    });
-    if (!ir.ok) { const e = await ir.json(); toast(e.error || 'Image upload failed.', true); }
+    imageError = await sendPhoto(`/api/items/${saved.id}/image`, pendingImage, 'Image upload failed.');
   } else if (clearImage && id) {
-    await fetch(`/api/items/${saved.id}/image`, { method: 'DELETE' });
+    imageError = await sendPhoto(`/api/items/${saved.id}/image`, null, 'Removing the image failed.');
   }
 
-  closeModal();
   await loadItems();
+  if (imageError) {
+    // Keep the modal open so the photo can be retried; the item's other fields are saved.
+    // The modal is now editing a real row, so a second Save updates rather than duplicates.
+    $('f-id').value = saved.id;
+    $('modal-title').textContent = 'Edit item';
+    // An unreadable file won't fix itself on retry — warn once, then let Save through.
+    imagePickError = null;
+    toast(`Item saved, but the photo was not: ${imageError}`, true);
+    return;
+  }
+  closeModal();
   toast(id ? 'Item updated.' : 'Item added.');
 });
 
@@ -445,7 +541,7 @@ function setEmpImgPreview(src) {
 }
 function openEmp(id) {
   const e = id ? employees.find((x) => x.id === id) : null;
-  pendingEmpPhoto = null; clearEmpPhoto = false;
+  pendingEmpPhoto = null; clearEmpPhoto = false; empPickError = null;
   $('e-img-input').value = '';
   $('emp-title').textContent = e ? 'Edit member' : 'Add member';
   $('e-id').value = e ? e.id : '';
@@ -458,16 +554,26 @@ function openEmp(id) {
 }
 
 $('e-img-pick').addEventListener('click', () => $('e-img-input').click());
-$('e-img-input').addEventListener('change', () => {
+$('e-img-input').addEventListener('change', async () => {
   const file = $('e-img-input').files[0];
   if (!file) return;
-  if (file.size > 6 * 1024 * 1024) return toast('Image must be under 6 MB.', true);
-  const reader = new FileReader();
-  reader.onload = () => { pendingEmpPhoto = { dataUrl: reader.result }; clearEmpPhoto = false; setEmpImgPreview(reader.result); };
-  reader.readAsDataURL(file);
+  toast('Preparing image…');
+  try {
+    const dataUrl = await prepareImage(file);
+    pendingEmpPhoto = { dataUrl };
+    clearEmpPhoto = false;
+    empPickError = null;
+    setEmpImgPreview(dataUrl);
+    toast('Photo ready — press Save to store it.');
+  } catch (err) {
+    pendingEmpPhoto = null;
+    empPickError = err.message;
+    $('e-img-input').value = '';
+    toast(err.message, true);
+  }
 });
 $('e-img-remove').addEventListener('click', () => {
-  pendingEmpPhoto = null; clearEmpPhoto = true; $('e-img-input').value = '';
+  pendingEmpPhoto = null; clearEmpPhoto = true; empPickError = null; $('e-img-input').value = '';
   setEmpImgPreview('');
 });
 $('add-emp').addEventListener('click', () => openEmp(null));
@@ -486,17 +592,22 @@ $('emp-save').addEventListener('click', async () => {
   if (!res.ok) { const e = await res.json(); return toast(e.error || 'Save failed.', true); }
   const saved = await res.json();
 
+  let photoError = empPickError;
   if (pendingEmpPhoto) {
-    await fetch(`/api/employees/${saved.id}/photo`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pendingEmpPhoto),
-    });
+    photoError = await sendPhoto(`/api/employees/${saved.id}/photo`, pendingEmpPhoto, 'Photo upload failed.');
   } else if (clearEmpPhoto && id) {
-    await fetch(`/api/employees/${saved.id}/photo`, { method: 'DELETE' });
+    photoError = await sendPhoto(`/api/employees/${saved.id}/photo`, null, 'Removing the photo failed.');
   }
 
-  empModal.classList.remove('show');
   await loadTeam();
+  if (photoError) {
+    $('e-id').value = saved.id;
+    $('emp-title').textContent = 'Edit member';
+    empPickError = null;
+    toast(`Member saved, but the photo was not: ${photoError}`, true);
+    return;
+  }
+  empModal.classList.remove('show');
   toast(id ? 'Member updated.' : 'Member added.');
 });
 $('emp-delete').addEventListener('click', async () => {

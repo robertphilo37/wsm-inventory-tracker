@@ -21,6 +21,10 @@ app.use(express.static(join(__dirname, 'public')));
 /* ------------------------------------------------------------------ */
 /*  Auth                                                               */
 /* ------------------------------------------------------------------ */
+// Express 4 doesn't catch rejections from async handlers — without this a DB
+// error takes down the process (and with it every logged-in admin session).
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 const sessions = new Set();
 function isAdmin(req) { return req.cookies && sessions.has(req.cookies.wsm_admin); }
 function requireAdmin(req, res, next) {
@@ -63,7 +67,7 @@ function broadcast(event, data) {
 /* ------------------------------------------------------------------ */
 /*  Health / diagnostics                                               */
 /* ------------------------------------------------------------------ */
-app.get('/api/health', async (_req, res) => {
+app.get('/api/health', wrap(async (_req, res) => {
   const usingTurso = !!process.env.TURSO_DATABASE_URL;
   const hasToken   = !!process.env.TURSO_AUTH_TOKEN;
   try {
@@ -73,7 +77,7 @@ app.get('/api/health', async (_req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, usingTurso, hasToken, error: e.message });
   }
-});
+}));
 
 /* ------------------------------------------------------------------ */
 /*  Inventory                                                          */
@@ -83,16 +87,16 @@ function catRank(c) { const i = CATEGORY_ORDER.indexOf(c); return i === -1 ? 99 
 
 app.get('/api/categories', (_req, res) => res.json(CATEGORY_ORDER));
 
-app.get('/api/items', async (req, res) => {
+app.get('/api/items', wrap(async (req, res) => {
   const includeArchived = isAdmin(req) && req.query.all === '1';
   const rows = await db.all(includeArchived
     ? 'SELECT items.*, (SELECT COUNT(*) FROM print_files WHERE item_id = items.id) AS file_count FROM items ORDER BY sort_order'
     : 'SELECT items.*, (SELECT COUNT(*) FROM print_files WHERE item_id = items.id) AS file_count FROM items WHERE archived = 0 ORDER BY sort_order');
   rows.sort((a, b) => catRank(a.category) - catRank(b.category) || a.sort_order - b.sort_order);
   res.json(rows);
-});
+}));
 
-app.post('/api/checkout', async (req, res) => {
+app.post('/api/checkout', wrap(async (req, res) => {
   const { item_id, quantity, person_name, notes } = req.body || {};
   const qty = parseInt(quantity, 10);
   const name = (person_name || '').trim();
@@ -112,10 +116,10 @@ app.post('/api/checkout', async (req, res) => {
   const updated = await db.get('SELECT * FROM items WHERE id = ?', [item_id]);
   broadcast('item-updated', updated);
   res.json({ ok: true, item: updated });
-});
+}));
 
 /* -------- Admin: create/update/delete items -------- */
-app.post('/api/items', requireAdmin, async (req, res) => {
+app.post('/api/items', requireAdmin, wrap(async (req, res) => {
   const { category, name, quantity, vendor, cost_per_unit, note, location, low_stock_threshold } = req.body || {};
   const cat = category?.trim() || 'Miscellaneous Items';
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required.' });
@@ -130,9 +134,9 @@ app.post('/api/items', requireAdmin, async (req, res) => {
   const item = await db.get('SELECT * FROM items WHERE id = ?', [info.lastInsertRowid]);
   broadcast('item-updated', item);
   res.json(item);
-});
+}));
 
-app.put('/api/items/:id', requireAdmin, async (req, res) => {
+app.put('/api/items/:id', requireAdmin, wrap(async (req, res) => {
   const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
   const { category, name, quantity, vendor, cost_per_unit, note, location, low_stock_threshold } = req.body || {};
@@ -160,57 +164,57 @@ app.put('/api/items/:id', requireAdmin, async (req, res) => {
   const updated = await db.get('SELECT * FROM items WHERE id = ?', [item.id]);
   broadcast('item-updated', updated);
   res.json(updated);
-});
+}));
 
-app.delete('/api/items/:id', requireAdmin, async (req, res) => {
+app.delete('/api/items/:id', requireAdmin, wrap(async (req, res) => {
   await db.run('UPDATE items SET archived = 1 WHERE id = ?', [req.params.id]);
   broadcast('item-removed', { id: Number(req.params.id) });
   res.json({ ok: true });
-});
+}));
 
 /* -------- Item images (stored as base64 data URLs in the DB) -------- */
 const VALID_IMG = /^data:(image\/(?:png|jpe?g|webp|gif));base64,/;
 
-app.post('/api/items/:id/image', requireAdmin, async (req, res) => {
+app.post('/api/items/:id/image', requireAdmin, wrap(async (req, res) => {
   const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
   const { dataUrl } = req.body || {};
-  if (!VALID_IMG.test(dataUrl || '')) return res.status(400).json({ error: 'Please upload a PNG, JPG, WEBP, or GIF image.' });
+  if (!VALID_IMG.test(dataUrl || '')) return res.status(400).json({ error: 'That file type isn\u2019t supported (iPhone HEIC photos need converting). Please use a PNG, JPG, WEBP, or GIF.' });
   const bytes = Buffer.from(dataUrl.split(',')[1], 'base64');
   if (bytes.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Image must be under 6 MB.' });
   await db.run('UPDATE items SET image_path = ?, has_picture = 1 WHERE id = ?', [dataUrl, item.id]);
   const updated = await db.get('SELECT * FROM items WHERE id = ?', [item.id]);
   broadcast('item-updated', updated);
   res.json(updated);
-});
+}));
 
-app.delete('/api/items/:id/image', requireAdmin, async (req, res) => {
+app.delete('/api/items/:id/image', requireAdmin, wrap(async (req, res) => {
   const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
-  await db.run('UPDATE items SET image_path = NULL WHERE id = ?', [item.id]);
+  await db.run('UPDATE items SET image_path = NULL, has_picture = 0 WHERE id = ?', [item.id]);
   const updated = await db.get('SELECT * FROM items WHERE id = ?', [item.id]);
   broadcast('item-updated', updated);
   res.json(updated);
-});
+}));
 
 /* -------- Team / employees -------- */
-app.get('/api/employees', async (req, res) => {
+app.get('/api/employees', wrap(async (req, res) => {
   const all = isAdmin(req) && req.query.all === '1';
   const rows = await db.all(all
     ? 'SELECT * FROM employees ORDER BY sort_order, name'
     : 'SELECT * FROM employees WHERE active = 1 ORDER BY sort_order, name');
   res.json(rows);
-});
+}));
 
-app.post('/api/employees', requireAdmin, async (req, res) => {
+app.post('/api/employees', requireAdmin, wrap(async (req, res) => {
   const name = (req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Name is required.' });
   const maxRow = await db.get('SELECT COALESCE(MAX(sort_order), 0) m FROM employees');
   const info = await db.run('INSERT INTO employees (name, sort_order) VALUES (?, ?)', [name, (maxRow.m || 0) + 1]);
   res.json(await db.get('SELECT * FROM employees WHERE id = ?', [info.lastInsertRowid]));
-});
+}));
 
-app.put('/api/employees/:id', requireAdmin, async (req, res) => {
+app.put('/api/employees/:id', requireAdmin, wrap(async (req, res) => {
   const emp = await db.get('SELECT * FROM employees WHERE id = ?', [req.params.id]);
   if (!emp) return res.status(404).json({ error: 'Not found.' });
   const name = req.body?.name != null ? (req.body.name || '').trim() : emp.name;
@@ -218,14 +222,14 @@ app.put('/api/employees/:id', requireAdmin, async (req, res) => {
   if (!name) return res.status(400).json({ error: 'Name is required.' });
   await db.run('UPDATE employees SET name = ?, active = ? WHERE id = ?', [name, active, emp.id]);
   res.json(await db.get('SELECT * FROM employees WHERE id = ?', [emp.id]));
-});
+}));
 
-app.delete('/api/employees/:id', requireAdmin, async (req, res) => {
+app.delete('/api/employees/:id', requireAdmin, wrap(async (req, res) => {
   await db.run('DELETE FROM employees WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/employees/:id/photo', requireAdmin, async (req, res) => {
+app.post('/api/employees/:id/photo', requireAdmin, wrap(async (req, res) => {
   const emp = await db.get('SELECT * FROM employees WHERE id = ?', [req.params.id]);
   if (!emp) return res.status(404).json({ error: 'Not found.' });
   const { dataUrl } = req.body || {};
@@ -234,40 +238,40 @@ app.post('/api/employees/:id/photo', requireAdmin, async (req, res) => {
   if (bytes.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Image must be under 6 MB.' });
   await db.run('UPDATE employees SET photo_path = ? WHERE id = ?', [dataUrl, emp.id]);
   res.json(await db.get('SELECT * FROM employees WHERE id = ?', [emp.id]));
-});
+}));
 
-app.delete('/api/employees/:id/photo', requireAdmin, async (req, res) => {
+app.delete('/api/employees/:id/photo', requireAdmin, wrap(async (req, res) => {
   const emp = await db.get('SELECT * FROM employees WHERE id = ?', [req.params.id]);
   if (!emp) return res.status(404).json({ error: 'Not found.' });
   await db.run('UPDATE employees SET photo_path = NULL WHERE id = ?', [emp.id]);
   res.json(await db.get('SELECT * FROM employees WHERE id = ?', [emp.id]));
-});
+}));
 
 /* -------- Checkout history -------- */
-app.get('/api/history', requireAdmin, async (_req, res) => {
+app.get('/api/history', requireAdmin, wrap(async (_req, res) => {
   const rows = await db.all('SELECT * FROM checkouts ORDER BY datetime(created_at) DESC, id DESC LIMIT 500');
   res.json(rows);
-});
+}));
 
-app.delete('/api/history/:id', requireAdmin, async (req, res) => {
+app.delete('/api/history/:id', requireAdmin, wrap(async (req, res) => {
   const row = await db.get('SELECT id FROM checkouts WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Log entry not found.' });
   await db.run('DELETE FROM checkouts WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
-});
+}));
 
 /* -------- Print files -------- */
 // List files for an item (metadata only — no blob returned here)
-app.get('/api/items/:id/files', requireAdmin, async (req, res) => {
+app.get('/api/items/:id/files', requireAdmin, wrap(async (req, res) => {
   const files = await db.all(
     'SELECT id, item_id, filename, mime_type, size_bytes, uploaded_at FROM print_files WHERE item_id = ? ORDER BY uploaded_at',
     [req.params.id]
   );
   res.json(files);
-});
+}));
 
 // Upload a file (base64 data URL)
-app.post('/api/items/:id/files', requireAdmin, async (req, res) => {
+app.post('/api/items/:id/files', requireAdmin, wrap(async (req, res) => {
   const item = await db.get('SELECT id FROM items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Item not found.' });
   const { filename, dataUrl } = req.body || {};
@@ -282,10 +286,10 @@ app.post('/api/items/:id/files', requireAdmin, async (req, res) => {
     [item.id, filename, mimeType, dataUrl, bytes.length]
   );
   res.json({ id: info.lastInsertRowid, item_id: item.id, filename, mime_type: mimeType, size_bytes: bytes.length });
-});
+}));
 
 // Serve / download a file  (?dl=1 forces attachment, otherwise inline for browser preview)
-app.get('/api/files/:id', requireAdmin, async (req, res) => {
+app.get('/api/files/:id', requireAdmin, wrap(async (req, res) => {
   const file = await db.get('SELECT * FROM print_files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'File not found.' });
   const buf = Buffer.from(file.data.split(',')[1], 'base64');
@@ -296,25 +300,39 @@ app.get('/api/files/:id', requireAdmin, async (req, res) => {
     'Content-Length': buf.length,
   });
   res.send(buf);
-});
+}));
 
 // Delete a file
-app.delete('/api/files/:id', requireAdmin, async (req, res) => {
+app.delete('/api/files/:id', requireAdmin, wrap(async (req, res) => {
   const file = await db.get('SELECT id FROM print_files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'File not found.' });
   await db.run('DELETE FROM print_files WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
-});
+}));
 
 /* -------- QR code -------- */
-app.get('/api/qr', requireAdmin, async (req, res) => {
+app.get('/api/qr', requireAdmin, wrap(async (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
   const url = req.query.url || `${base}/`;
   const dataUrl = await QRCode.toDataURL(url, { width: 640, margin: 1, color: { dark: '#3D4A57', light: '#ffffff' } });
   res.json({ url, dataUrl });
-});
+}));
 
 app.get('/admin', (_req, res) => res.sendFile(join(__dirname, 'public', 'admin.html')));
+
+/* ------------------------------------------------------------------ */
+/*  Errors — always JSON for /api so the client can report them        */
+/* ------------------------------------------------------------------ */
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  console.error(`${req.method} ${req.originalUrl} failed:`, err);
+  if (res.headersSent) return;
+  // body-parser flags an over-large JSON body this way
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'That upload is too large. Please use a smaller image.' });
+  }
+  res.status(500).json({ error: 'Something went wrong saving that. Please try again.' });
+});
 
 app.listen(PORT, () => {
   console.log(`WSM Inventory → http://localhost:${PORT}`);
